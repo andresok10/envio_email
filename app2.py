@@ -115,7 +115,7 @@ Adjunto mi CV para su consideración, en el cual detallo mi experiencia y habili
 
 Dave Garcia<br>
 0961655965 - 0982601661<br>
-davexgarcia@gmail.com
+davexgarcia@gmail
 </td>
 """
 
