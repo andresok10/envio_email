@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Estado de envío de correos</title>
+
+    <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+
+    <style>
+        ul {
+            /*list-style-type: none;*/
+            list-style: none;
+            padding-left: 0;
+            margin: 0;
+        }
+
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            background: #f3f4f6;
+            padding: 25px
+        }
+
+        .layout {
+            display: flex;
+            gap: 20px
+        }
+
+        .left,
+        .right {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 15px
+        }
+
+        .card {
+            background: #fff;
+            border-radius: 10px;
+            padding: 18px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, .12)
+        }
+
+        /* Barra de progreso */
+        .bar {
+            width: 100%;
+            height: 16px;
+            border-radius: 20px;
+            background: #e5e7eb;
+            overflow: hidden
+        }
+
+        .bar-fill {
+            height: 100%;
+            width: 0%;
+            background: #3b82f6;
+            transition: width .25s ease
+        }
+
+        /* Estados */
+        .status.pending {
+            color: gray
+        }
+
+        .status.success {
+            color: green;
+            font-weight: bold
+        }
+
+        .status.failure {
+            color: red;
+            font-weight: bold
+        }
+
+        /* PDFs */
+        .pdf-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px
+        }
+
+        .pdf-thumb-wrapper {
+            display: inline-block
+        }
+
+        .pdf-thumb {
+            width: 140px;
+            text-align: center;
+            cursor: pointer;
+            transition: transform .25s, box-shadow .25s;
+            position: relative
+        }
+
+        .pdf-thumb iframe {
+            width: 130px;
+            height: 160px;
+            border: 1px solid #aaa;
+            border-radius: 8px;
+            pointer-events: none
+        }
+
+        .pdf-thumb-wrapper:hover .pdf-thumb {
+            transform: scale(1.35);
+            z-index: 3;
+            box-shadow: 0 8px 18px rgba(0, 0, 0, .25)
+        }
+
+        .pdf-name {
+            margin-top: 4px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-size: 12px
+        }
+
+        /* modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, .55);
+            justify-content: center;
+            align-items: center
+        }
+
+        .modal-content {
+            background: #fff;
+            padding: 8px;
+            border-radius: 10px;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            position: relative
+        }
+
+        .modal-content iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+            border-radius: 8px
+        }
+
+        .close {
+            position: absolute;
+            top: 8px;
+            right: 12px;
+            font-size: 28px;
+            cursor: pointer;
+            font-weight: bold;
+            color: #fff;
+            background: rgba(0, 0, 0, .6);
+            padding: 4px 10px;
+            border-radius: 6px
+        }
+
+        .close:hover {
+            background: #000
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Envío masivo de correos</h1>
+
+    <div class="layout">
+
+        <div class="left">
+
+            <div class="card">
+                <form method="post" action="{{ url_for('send_email') }}">
+                    <button type="submit">Iniciar envío</button>
+                </form>
+                <p id="global_state"><b>Estado:</b> esperando…</p>
+            </div>
+
+            <div class="card">
+                <h3>Progreso general</h3>
+
+                <div class="bar">
+                    <div id="bar_fill" class="bar-fill"></div>
+                </div>
+
+                <p>
+                    <b>Progreso:</b> <span id="percent">0</span>%<br>
+                    <b>Enviados:</b> <span id="sent">0</span><br>
+                    <b>Fallidos:</b> <span id="failed">0</span><br>
+                    <b>Total:</b> <span id="total">{{ emails|length
+                            }}</span>
+                </p>
+            </div>
+
+            <div class="card">
+                <h3>Archivos adjuntos (PDF)</h3>
+
+                <div class="pdf-grid">
+                    {% for f in files %}
+                    <div class="pdf-thumb-wrapper">
+                        <div class="pdf-thumb" data-src="{{ url_for('uploads', filename=f.filename) }}">
+                            <iframe src="{{ url_for('uploads', filename=f.filename) }}#toolbar=0&navpanes=0&scrollbar=0"></iframe>
+                            <div class="pdf-name" title="{{ f.filename }}">{{ f.filename
+                                    }}</div>
+                        </div>
+                    </div>
+                    {% else %}
+                    <p>No hay archivos adjuntos</p>
+                    {% endfor %}
+                </div>
+            </div>
+
+        </div>
+
+        <div class="right">
+            <div class="card">
+                <h3>Correos</h3>
+                <ul>
+                    {% for email in emails %}
+                    <li id="{{ email|replace('@','_')|replace('.','_') }}">
+                        {{ loop.index }} – {{ email }} –
+                        <span class="status pending">pendiente</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- MODAL -->
+    <div id="pdf_modal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <iframe id="modal_frame"></iframe>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+
+        ///======= MODAL PDF =======
+        const modal = document.getElementById("pdf_modal");
+        const modalFrame = document.getElementById("modal_frame");
+        const closeBtn = document.querySelector(".close");
+
+        document.querySelectorAll(".pdf-thumb").forEach(el => {
+            el.addEventListener("click", () => {
+                const src = el.getAttribute("data-src") + "#toolbar=0&navpanes=0&scrollbar=0";
+                modalFrame.src = src;
+                modal.style.display = "flex";
+            });
+        });
+
+        closeBtn.onclick = () => { modal.style.display = "none"; modalFrame.src = "" };
+        window.onclick = e => { if (e.target === modal) { modal.style.display = "none"; modalFrame.src = "" } };
+
+        /* ======= SOCKET EVENTS ======= */
+
+        /* progreso por mensaje */
+        socket.on("progress_update", function (data) {
+
+            document.getElementById("percent").textContent = data.progress;
+            document.getElementById("sent").textContent = data.sent;
+            document.getElementById("failed").textContent = data.failed;
+
+            /* barra */
+            document.getElementById("bar_fill").style.width = data.progress + "%";
+
+            /* id seguro por email */
+            const safeId = data.recipient.replace(/[@.]/g, "_");
+            const li = document.getElementById(safeId);
+
+            if (li) {
+                const span = li.querySelector(".status");
+                if (data.status === "success") {
+                    span.textContent = "enviado";
+                    span.className = "status success";
+                } else {
+                    span.textContent = "fallido";
+                    span.className = "status failure";
+                }
+            }
+        });
+
+        /* estado global */
+        socket.on("process_status", function (data) {
+            const gs = document.getElementById("global_state");
+            if (data.status === "started") { gs.innerHTML = "<b>Estado:</b> enviando…"; }
+            if (data.status === "completed") { gs.innerHTML = "<b>Estado:</b> completado"; }
+        });
+    </script>
+
+</body>
+
+</html>

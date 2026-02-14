@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Estado de envío de correos</title>
+    <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: #f3f4f6;
+            padding: 0px 0px
+        }
+
+        /* Barra de progreso */
+        .bar {
+            width: 70%;
+            height: 16px;
+            border-radius: 20px;
+            background: #e5e7eb;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+
+        .bar-fill {
+            height: 90%;
+            width: 0%;
+            background: #3b82f6;
+            transition: width .25s ease
+        }
+
+        .status {
+            font-size: 13px;
+            font-weight: bold;
+            white-space: nowrap;
+            min-width: 150px;
+            text-align: right;
+        }
+
+        /* Estados */
+        .status.pending {
+            color: #9ca3af;
+        }
+
+        .status.success {
+            color: #10b981;
+        }
+
+        .status.invalid {
+            color: #f59e0b;
+        }
+
+        .status.failure {
+            color: #ef4444;
+        }
+
+        /* --- NUEVO DISEÑO DE MINIATURAS PDF --- */
+        .pdf-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .pdf-thumb {
+            width: 140px;
+            text-align: center;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .pdf-thumb:hover {
+            transform: translateY(-3px);
+        }
+
+        /* El secreto: un contenedor con overflow oculto */
+        .pdf-wrapper {
+            width: 100%;
+            height: 180px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            overflow: hidden;
+            /* Esto corta el exceso del PDF escalado */
+            background: #fff;
+            position: relative;
+        }
+
+        /* Escalamos el iframe para que el contenido sea legible */
+        .pdf-wrapper iframe {
+            width: 560px;
+            /* Ancho virtual grande */
+            height: 720px;
+            /* Alto virtual grande */
+            border: none;
+            pointer-events: none;
+            /* Evita interactuar con la miniatura */
+
+            /* Reducimos el tamaño visualmente al 25% */
+            transform: scale(0.25);
+            transform-origin: 0 0;
+        }
+
+        .pdf-name {
+            font-size: 11px;
+            margin-top: 5px;
+            color: #555;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            font-weight: 500;
+        }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-content {
+            background: white;
+            width: 70%;
+            height: 70%;
+            position: relative;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .close {
+            position: absolute;
+            top: 15px;
+            right: 25px;
+            color: white;
+            cursor: pointer;
+            font-size: 30px;
+            font-weight: bold;
+            z-index: 1100;
+        }
+
+        .ok {
+            display: flex;
+            flex-wrap: wrap;
+            width: 57%;
+            justify-content: space-evenly;
+            margin: 0px 0px;
+            font-size: 15px;
+            gap: 10px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .ok2 {
+            display: flex;
+            width: 400px;
+        }
+
+        .ok3 {
+            margin: 0px 0px;
+            justify-content: flex-start;
+        }
+
+        .spanx {
+            gap: 10px;
+            color: #888;
+            font-size: 10px;
+            margin-right: 10px;
+        }
+
+        .globo {
+            display: flex;
+        }
+
+        @media (max-width: 1024px) {
+
+            /* Contenedor principal pasa a columna */
+            body>div>div {
+                flex-direction: column;
+            }
+
+            /* Panel izquierdo ocupa todo el ancho */
+            body>div>div>div:first-child {
+                width: 100% !important;
+            }
+
+            /* Lista de correos ocupa todo el ancho */
+            .ok {
+                width: 100%;
+                justify-content: flex-start;
+            }
+
+            /* Cada fila ocupa todo el ancho */
+            .ok2 {
+                width: 100%;
+                justify-content: space-between;
+                padding: 0px 0px;
+                background: #ffffff;
+                border-radius: 6px;
+            }
+
+        }
+
+        /* Ajuste extra para móviles pequeños */
+        @media (max-width: 600px) {
+
+            .bar {
+                width: 100%;
+            }
+
+            .pdf-grid {
+                justify-content: center;
+            }
+
+            .ok2 {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 4px;
+            }
+
+            .status {
+                text-align: left;
+                min-width: auto;
+            }
+
+            .spanx {
+                display: none;
+            }
+
+        }
+    </style>
+</head>
+
+<body>
+    <h1>🚀 Panel de Envío Masivo</h1>
+    <div class="globo">
+        <div style="display: flex;width: 100%; gap: 20px;justify-content: center;justify-items:center;justify-self: center;">
+            <div style="display:block; width: 40%;background:#ffffff; padding:0px; border-radius:5px;justify-items:center;justify-self: center;">
+                <div style="display: flex;">
+                    <h3 style="margin-right: 20px;">Asunto:</h3>
+                    <h3 style="color:#3b82f6;">{{asuntox}}</h3>
+                </div>
+
+                <div style="display: block;">
+                    <form method="post" action="{{ url_for('send_email') }}">
+                        <button type="submit" style="background:#3b82f6; color:white; border:none; padding:12px 25px; border-radius:5px; cursor:pointer; font-weight:bold;">
+                            Iniciar ciclo de envío
+                        </button>
+                    </form>
+                    <p id="global_state" style="margin-top:15px;"><b>Estado:</b> En espera...</p>
+                    <h5>Resumen de Envío:</h5>
+                    <div class="bar">
+                        <div id="bar_fill" class="bar-fill"></div>
+                    </div>
+                    <span><b>Progreso:</b> <span id="percent">0</span>%</span>
+                    <span><b>Total:</b> <span id="total">{{ emails|length }}</span></span>
+                    <span><b>Enviados:</b> <span id="sent">0</span></span>
+                    <span><b>Inválidos:</b> <span id="invalid">0</span></span>
+                    <h3>Documentos Adjuntos (Contenido)</h3>
+                    <div class="pdf-grid">
+                        {% for f in files %}
+                        <div class="pdf-thumb" data-src="{{ url_for('uploads', filename=f.filename) }}">
+                            <div class="pdf-wrapper">
+                                <iframe src="{{ url_for('uploads', filename=f.filename) }}#toolbar=0&navpanes=0&view=FitH"></iframe>
+                            </div>
+                            <div class="pdf-name">{{ f.filename }}</div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+
+
+            <div class="ok">
+                {% for email in emails %}
+                <div class="ok2" id="{{ email|replace('@','_')|replace('.','_') }}">
+                    <span class="spanx">#{{ loop.index }}</span>
+                    <p class="ok3">{{ email }}</d>
+                        <span class="status pending">⏳ pendiente</span>
+                </div>
+
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+
+    <div id="pdf_modal" class="modal">
+        <span class="close">✖</span>
+        <div class="modal-content">
+            <iframe id="modal_frame" style="width:100%; height:100%; border:none;"></iframe>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        const modal = document.getElementById("pdf_modal");
+        const modalFrame = document.getElementById("modal_frame");
+
+        // Modal PDF
+        document.querySelectorAll(".pdf-thumb").forEach(el => {
+            el.addEventListener("click", () => {
+                modalFrame.src = el.getAttribute("data-src");
+                modal.style.display = "flex";
+            });
+        });
+        document.querySelector(".close").onclick = () => {
+            modal.style.display = "none";
+            modalFrame.src = "";
+        };
+
+        // Sockets
+        socket.on("progress_update", function (data) {
+            document.getElementById("percent").textContent = data.progress;
+            document.getElementById("sent").textContent = data.sent;
+            document.getElementById("invalid").textContent = data.invalid || 0;
+            document.getElementById("bar_fill").style.width = data.progress + "%";
+
+            const safeId = data.recipient.replace(/[@.]/g, "_");
+            const li = document.getElementById(safeId);
+
+            if (li) {
+                const span = li.querySelector(".status");
+                if (data.status === "success") {
+                    span.textContent = "✅ enviado";
+                    span.className = "status success";
+                } else {
+                    span.textContent = "⚠️ error";
+                    span.className = "status failure";
+                }
+                li.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        });
+
+        socket.on("process_status", function (data) {
+            const gs = document.getElementById("global_state");
+            if (data.status === "started") gs.innerHTML = "<b>Estado:</b> 🚀 Enviando...";
+            if (data.status === "completed") gs.innerHTML = "<b>Estado:</b> ✅ Finalizado";
+        });
+    </script>
+</body>
+
+</html>
